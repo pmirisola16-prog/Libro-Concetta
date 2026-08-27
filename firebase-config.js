@@ -6,7 +6,7 @@
 // → "Le tue app" → app Web → oggetto firebaseConfig
 // ─────────────────────────────────────────────────────────────
 const firebaseConfig = {
-  apiKey: "AIzaSyDUr8XiqBn5-yDLI62QLABfsK8bq-qxD9s",
+  apiKey: "AIzaSyDUr8XiqBn5-yDLI62QlABfsK8bq-qxD9s",
   authDomain: "libro-concetta.firebaseapp.com",
   projectId: "libro-concetta",
   storageBucket: "libro-concetta.firebasestorage.app",
