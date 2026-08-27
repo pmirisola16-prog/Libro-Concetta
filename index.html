@@ -12,6 +12,7 @@
 <link rel="apple-touch-icon" href="icons/icon-192.png">
 <link rel="icon" href="icons/icon-192.png">
 <link rel="stylesheet" href="https://cdn.jsdelivr.net/npm/@tabler/icons-webfont@2.47.0/tabler-icons.min.css">
+<script src="https://cdnjs.cloudflare.com/ajax/libs/Chart.js/4.4.1/chart.umd.min.js"></script>
 <!-- Firebase (compat SDK, semplice da usare senza bundler) -->
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-app-compat.js"></script>
 <script src="https://www.gstatic.com/firebasejs/10.13.0/firebase-firestore-compat.js"></script>
@@ -38,7 +39,7 @@ button{cursor:pointer;border:none;background:none}
 
 /* nav */
 .nav{position:fixed;bottom:0;left:50%;transform:translateX(-50%);width:100%;max-width:480px;background:#3A332D;display:flex;justify-content:space-around;padding:10px 0 calc(10px + env(safe-area-inset-bottom));border-top:1px solid #4A4038;z-index:20}
-.nav button{display:flex;flex-direction:column;align-items:center;gap:3px;color:#A0958A;padding:4px 12px;font-size:10px;letter-spacing:.3px}
+.nav button{display:flex;flex-direction:column;align-items:center;gap:3px;color:#A0958A;padding:4px 6px;font-size:9.5px;letter-spacing:.2px}
 .nav button.active{color:#E7B7A0}
 .nav .icon{font-size:19px;line-height:1}
 
@@ -99,17 +100,21 @@ button{cursor:pointer;border:none;background:none}
 .del-btn{background:none;color:#C7B9AC;font-size:16px;padding:0 4px}
 
 /* stats */
-.chart-wrap{height:220px;margin-bottom:8px}
+.chart-wrap{height:280px;margin-bottom:8px}
 .legend{display:flex;flex-wrap:wrap;gap:8px;margin-bottom:24px}
-.legend-item{display:flex;align-items:center;gap:5px;font-size:11px;color:#9C8F84}
-.legend-dot{width:8px;height:8px;border-radius:50%;display:inline-block}
+.legend-item{display:flex;align-items:center;gap:5px;font-size:12px;color:#3A332D;font-weight:500}
+.legend-dot{width:9px;height:9px;border-radius:50%;display:inline-block}
 .stats-cards{display:flex;gap:10px;margin-bottom:24px}
 .stats-card{flex:1;background:#fff;border:1px solid #EFE3D8;border-radius:12px;padding:14px}
 .stats-card .name{font-size:12px;color:#9C8F84}
 .stats-card .val{font-family:'Manrope',sans-serif;font-size:18px;font-weight:700}
-.chart-wrap2{height:200px;margin-bottom:24px}
 
 .dl-days{font-size:11px;font-weight:600;white-space:nowrap}
+.amount-hint{font-family:'Manrope',sans-serif;font-size:20px;font-weight:700;margin-top:8px;color:#9C8F84;min-height:26px}
+.amount-hint.ok{color:#7C9473}
+.amount-hint.bad{color:#B65C6B;font-size:13px;font-weight:500;font-family:'Inter',sans-serif}
+.dl-right{display:flex;flex-direction:column;align-items:flex-end;gap:2px}
+.dl-time{font-family:'Manrope',sans-serif;font-size:22px;font-weight:700;color:#3A332D;line-height:1.1;white-space:nowrap}
 .dl-done{background:#fff;color:#3A332D;border:1px solid #EFE3D8;border-radius:8px;font-size:11px;padding:5px 9px}
 .dl-done i{font-size:14px}
 .dash-deadline{background:#fff;border:1px solid #EFE3D8;border-radius:12px;padding:10px 14px;display:flex;justify-content:space-between;align-items:center;margin-bottom:8px}
@@ -203,7 +208,7 @@ button{cursor:pointer;border:none;background:none}
     <div id="add-spesa">
       <div class="field">
         <div class="field-label">Importo (€)</div>
-        <input class="input" id="expAmount" inputmode="decimal" placeholder="0,00">
+        <input class="input" id="expAmount" inputmode="decimal" placeholder="0,00"><div class="amount-hint" id="expAmountHint"></div>
       </div>
       <div class="field">
         <div class="field-label">Categoria</div>
@@ -236,7 +241,7 @@ button{cursor:pointer;border:none;background:none}
     <div id="add-entrata" style="display:none">
       <div class="field">
         <div class="field-label">Importo (€)</div>
-        <input class="input" id="incAmount" inputmode="decimal" placeholder="0,00">
+        <input class="input" id="incAmount" inputmode="decimal" placeholder="0,00"><div class="amount-hint" id="incAmountHint"></div>
       </div>
       <div class="field">
         <div class="field-label">Tipo di entrata</div>
@@ -260,7 +265,7 @@ button{cursor:pointer;border:none;background:none}
     <div id="add-giroconto" style="display:none">
       <div class="field">
         <div class="field-label">Importo (€)</div>
-        <input class="input" id="trfAmount" inputmode="decimal" placeholder="0,00">
+        <input class="input" id="trfAmount" inputmode="decimal" placeholder="0,00"><div class="amount-hint" id="trfAmountHint"></div>
       </div>
       <div class="field">
         <div class="field-label">Da conto</div>
@@ -299,52 +304,22 @@ button{cursor:pointer;border:none;background:none}
 
   <!-- SALUTE -->
   <div class="page" id="page-salute">
-    <div class="tabbar">
-      <button data-healthtab="visite" class="active">Visite</button>
-      <button data-healthtab="medicine">Medicine</button>
+    <div class="section-title">Medicine in corso</div>
+    <div id="medsList"></div>
+    <div class="section-title" style="margin-top:20px">Aggiungi medicina</div>
+    <div class="field">
+      <div class="field-label">Nome medicina</div>
+      <input class="input" id="medName" placeholder="es. Cardioaspirin">
     </div>
-
-    <div id="health-visite">
-      <div class="section-title">Visite registrate</div>
-      <div id="visitsList"></div>
-      <div class="section-title" style="margin-top:20px">Aggiungi visita</div>
-      <div class="field">
-        <div class="field-label">Data</div>
-        <input class="input" type="date" id="visitDate">
-      </div>
-      <div class="field">
-        <div class="field-label">Ora (opzionale)</div>
-        <input class="input" type="time" id="visitTime">
-      </div>
-      <div class="field">
-        <div class="field-label">Medico / specialista</div>
-        <input class="input" id="visitDoctor" placeholder="es. Dott. Rossi, cardiologo">
-      </div>
-      <div class="field">
-        <div class="field-label">Nota (opzionale)</div>
-        <input class="input" id="visitNote" placeholder="es. controllo pressione, esito...">
-      </div>
-      <button class="submit-btn" style="background:#7B93AE" id="visitSubmit">Registra visita</button>
+    <div class="field">
+      <div class="field-label">Come si prende</div>
+      <input class="input" id="medDosage" placeholder="es. 1 compressa mattina e sera dopo i pasti">
     </div>
-
-    <div id="health-medicine" style="display:none">
-      <div class="section-title">Medicine in corso</div>
-      <div id="medsList"></div>
-      <div class="section-title" style="margin-top:20px">Aggiungi medicina</div>
-      <div class="field">
-        <div class="field-label">Nome medicina</div>
-        <input class="input" id="medName" placeholder="es. Cardioaspirin">
-      </div>
-      <div class="field">
-        <div class="field-label">Come si prende</div>
-        <input class="input" id="medDosage" placeholder="es. 1 compressa mattina e sera dopo i pasti">
-      </div>
-      <div class="field">
-        <div class="field-label">Nota (opzionale)</div>
-        <input class="input" id="medNote" placeholder="es. prescritta dal Dott. Rossi">
-      </div>
-      <button class="submit-btn" style="background:#BD6E7A" id="medSubmit">Aggiungi medicina</button>
+    <div class="field">
+      <div class="field-label">Nota (opzionale)</div>
+      <input class="input" id="medNote" placeholder="es. prescritta dal Dott. Rossi">
     </div>
+    <button class="submit-btn" style="background:#BD6E7A" id="medSubmit">Aggiungi medicina</button>
   </div>
 
   <!-- SCADENZE -->
@@ -357,12 +332,16 @@ button{cursor:pointer;border:none;background:none}
       <div class="chip-grid" id="dlCategoryGrid"></div>
     </div>
     <div class="field">
-      <div class="field-label">Titolo (usa "Altro" per un tipo personalizzato)</div>
-      <input class="input" id="dlTitle" placeholder="es. Visita dal dentista">
+      <div class="field-label">Titolo (es. nome del medico, o lascia vuoto)</div>
+      <input class="input" id="dlTitle" placeholder="es. Dott. Rossi, cardiologo">
     </div>
     <div class="field">
-      <div class="field-label">Scade il</div>
+      <div class="field-label">Data</div>
       <input class="input" type="date" id="dlDate">
+    </div>
+    <div class="field">
+      <div class="field-label">Ora (opzionale, per appuntamenti/visite)</div>
+      <input class="input" type="time" id="dlTime">
     </div>
     <div class="field">
       <div class="field-label">Ripeti</div>
@@ -375,12 +354,18 @@ button{cursor:pointer;border:none;background:none}
     <button class="submit-btn" style="background:#7B93AE" id="dlSubmit">Aggiungi scadenza</button>
   </div>
 
+  <!-- GRAFICI -->
+  <div class="page" id="page-stats">
+    <div id="statsContent"></div>
+  </div>
+
   <div class="nav">
     <button data-page="dashboard" class="active"><span class="icon"><i class="ti ti-home"></i></span>Home</button>
     <button data-page="add"><span class="icon"><i class="ti ti-plus"></i></span>Aggiungi</button>
     <button data-page="salute"><span class="icon"><i class="ti ti-stethoscope"></i></span>Salute</button>
     <button data-page="history"><span class="icon"><i class="ti ti-list"></i></span>Storico</button>
     <button data-page="scadenze"><span class="icon"><i class="ti ti-alarm"></i></span>Scadenze</button>
+    <button data-page="stats"><span class="icon"><i class="ti ti-chart-bar"></i></span>Grafici</button>
   </div>
 
   <div class="toast" id="toast"></div>

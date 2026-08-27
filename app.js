@@ -61,6 +61,24 @@ function eur(n) {
   intPart = intPart.replace(/\B(?=(\d{3})+(?!\d))/g, ".");
   return "€" + (neg ? "-" : "") + intPart + "," + decPart;
 }
+/* Interpreta un importo scritto in qualsiasi formato comune: "50", "50,00",
+   "50,20", "50.20", con o senza simbolo €, con o senza spazi. Se compaiono
+   sia virgola che punto, l'ultimo dei due è considerato separatore decimale. */
+function parseAmount(raw) {
+  if (raw === null || raw === undefined) return NaN;
+  let s = String(raw).trim();
+  if (!s) return NaN;
+  s = s.replace(/[^0-9.,-]/g, "");
+  const lastComma = s.lastIndexOf(",");
+  const lastDot = s.lastIndexOf(".");
+  if (lastComma > -1 && lastDot > -1) {
+    if (lastComma > lastDot) s = s.replace(/\./g, "").replace(",", ".");
+    else s = s.replace(/,/g, "");
+  } else if (lastComma > -1) {
+    s = s.replace(",", ".");
+  }
+  return parseFloat(s);
+}
 function monthKey(d) { const x = new Date(d); return `${x.getFullYear()}-${x.getMonth()}`; }
 function monthLabel(k) { const [y, m] = k.split("-"); return `${MONTHS[parseInt(m)]} ${y}`; }
 function todayISO() { return new Date().toISOString().slice(0, 10); }
@@ -168,11 +186,6 @@ function attachListeners() {
     deadlines = doc.exists ? (doc.data().items || []) : [];
     render();
   }, (err) => showError("Errore lettura scadenze: " + err.message));
-
-  db.collection("ledger").doc("visits").onSnapshot((doc) => {
-    visits = doc.exists ? (doc.data().items || []) : [];
-    render();
-  }, (err) => showError("Errore lettura visite: " + err.message));
 
   db.collection("ledger").doc("medicines").onSnapshot((doc) => {
     medicines = doc.exists ? (doc.data().items || []) : [];
@@ -384,7 +397,7 @@ function completeDeadline(id) {
 }
 
 /* ───────────────── EDIT MODAL ───────────────── */
-let editState = null; // { kind: 'spesa'|'entrata'|'giroconto', id, data }
+let editState = null; // { kind: 'spesa'|'entrata'|'giroconto'|'medicina', id, data }
 
 function closeEditModal() {
   document.getElementById("editOverlay").style.display = "none";
@@ -395,7 +408,8 @@ function openEditModal(kind, id) {
   let item;
   if (kind === "spesa") item = expenses.find((e) => e.id === id);
   else if (kind === "entrata") item = incomes.find((i) => i.id === id);
-  else item = transfers.find((t) => t.id === id);
+  else if (kind === "giroconto") item = transfers.find((t) => t.id === id);
+  else item = medicines.find((m) => m.id === id);
   if (!item) return;
   editState = { kind, id, data: { ...item } };
   renderEditModal();
@@ -407,14 +421,44 @@ function syncEditInputs() {
   const amt = document.getElementById("editAmount");
   const note = document.getElementById("editNote");
   const date = document.getElementById("editDate");
+  const medName = document.getElementById("editMedName");
+  const medDosage = document.getElementById("editMedDosage");
   if (amt) editState.data.amount = amt.value;
   if (note) editState.data.note = note.value;
   if (date) editState.data.date = date.value;
+  if (medName) editState.data.name = medName.value;
+  if (medDosage) editState.data.dosage = medDosage.value;
 }
 
 function renderEditModal() {
   const card = document.getElementById("editModalCard");
   const { kind, data } = editState;
+
+  if (kind === "medicina") {
+    let mhtml = `<div class="modal-title">Modifica medicina<button class="modal-close" id="editCloseBtn"><i class="ti ti-x"></i></button></div>`;
+    mhtml += `<div class="field"><div class="field-label">Nome medicina</div><input class="input" id="editMedName" value="${(data.name || "").replace(/"/g, "&quot;")}"></div>`;
+    mhtml += `<div class="field"><div class="field-label">Come si prende</div><input class="input" id="editMedDosage" value="${(data.dosage || "").replace(/"/g, "&quot;")}"></div>`;
+    mhtml += `<div class="field"><div class="field-label">Nota (opzionale)</div><input class="input" id="editNote" value="${(data.note || "").replace(/"/g, "&quot;")}"></div>`;
+    mhtml += `<button class="submit-btn" style="background:#3A332D" id="editSaveBtn">Salva modifiche</button>`;
+    mhtml += `<button class="delete-link-btn" id="editDeleteBtn">Elimina medicina</button>`;
+    card.innerHTML = mhtml;
+    document.getElementById("editCloseBtn").onclick = closeEditModal;
+    document.getElementById("editSaveBtn").onclick = () => {
+      syncEditInputs();
+      const name = (editState.data.name || "").trim();
+      if (!name) { toast("Inserisci il nome della medicina"); return; }
+      updateMedicine(editState.id, { name, dosage: editState.data.dosage || "", note: editState.data.note || "" });
+      toast("Medicina aggiornata");
+      closeEditModal();
+    };
+    document.getElementById("editDeleteBtn").onclick = () => {
+      const idNow = editState.id;
+      closeEditModal();
+      deleteMedicine(idNow);
+    };
+    return;
+  }
+
   const title = kind === "spesa" ? "Modifica spesa" : kind === "entrata" ? "Modifica entrata" : "Modifica giroconto";
 
   let html = `<div class="modal-title">${title}<button class="modal-close" id="editCloseBtn"><i class="ti ti-x"></i></button></div>`;
@@ -467,7 +511,7 @@ function renderEditModal() {
 
   document.getElementById("editSaveBtn").onclick = () => {
     syncEditInputs();
-    const val = parseFloat(String(editState.data.amount).replace(",", "."));
+    const val = parseAmount(editState.data.amount);
     if (!val || val <= 0) { toast("Inserisci un importo valido"); return; }
     const date = editState.data.date || todayISO();
     const note = editState.data.note || "";
@@ -511,8 +555,9 @@ document.querySelectorAll(".nav button").forEach((btn) => {
     btn.classList.add("active");
     document.getElementById("page-" + btn.dataset.page).classList.add("active");
     if (btn.dataset.page === "history") renderHistory();
-    if (btn.dataset.page === "salute") { renderVisits(); renderMeds(); }
+    if (btn.dataset.page === "salute") renderMeds();
     if (btn.dataset.page === "scadenze") renderDeadlines();
+    if (btn.dataset.page === "stats") renderStats();
   });
 });
 
@@ -598,7 +643,7 @@ function buildAddForm() {
       </div>`;
     balForm.appendChild(wrap);
     wrap.querySelector(".bal-save-btn").onclick = () => {
-      const val = parseFloat(document.getElementById(`bal-${acc}`).value.replace(",", ".")) || 0;
+      const val = parseAmount(document.getElementById(`bal-${acc}`).value) || 0;
       updateBalance(acc, val); toast(`Saldo ${acc} aggiornato`);
     };
     wrap.querySelector(".bal-del-btn").onclick = () => removeAccount(acc);
@@ -683,11 +728,13 @@ document.getElementById("dlSubmit").onclick = () => {
   const title = selDlCategory === "Altro" && customTitle ? customTitle : (customTitle || selDlCategory);
   addDeadline({
     title, category: selDlCategory, dueDate: dateVal,
+    time: document.getElementById("dlTime").value,
     recurrence: selDlRecurrence, note: document.getElementById("dlNote").value,
   });
   toast(`Scadenza "${title}" aggiunta`);
   document.getElementById("dlTitle").value = "";
   document.getElementById("dlNote").value = "";
+  document.getElementById("dlTime").value = "";
 };
 
 /* ───────────────── TOGGLE GESTISCI CATEGORIE ───────────────── */
@@ -701,30 +748,53 @@ document.getElementById("addCatBtn").onclick = () => {
   document.getElementById("newCatIcon").value = "";
 };
 
+/* ───────────────── ANTEPRIMA IMPORTO IN TEMPO REALE ───────────────── */
+function wireAmountHint(inputId, hintId) {
+  const input = document.getElementById(inputId);
+  const hint = document.getElementById(hintId);
+  input.addEventListener("input", () => {
+    const raw = input.value.trim();
+    if (!raw) { hint.textContent = ""; hint.className = "amount-hint"; return; }
+    const val = parseAmount(raw);
+    if (!val || val <= 0 || isNaN(val)) {
+      hint.textContent = "Importo non riconosciuto";
+      hint.className = "amount-hint bad";
+    } else {
+      hint.textContent = "= " + eur(val);
+      hint.className = "amount-hint ok";
+    }
+  });
+}
+wireAmountHint("expAmount", "expAmountHint");
+wireAmountHint("incAmount", "incAmountHint");
+wireAmountHint("trfAmount", "trfAmountHint");
+
 /* ───────────────── SUBMIT HANDLERS ───────────────── */
 document.getElementById("expSubmit").onclick = () => {
-  const val = parseFloat(document.getElementById("expAmount").value.replace(",", "."));
+  const val = parseAmount(document.getElementById("expAmount").value);
   if (!val || val <= 0) { toast("Inserisci un importo valido"); return; }
   addExpense({ amount: val, category: selCategory, account: selExpAccount,
     note: document.getElementById("expNote").value, date: document.getElementById("expDate").value || todayISO() });
   const fromMsg = selExpAccount ? ` scalata da ${selExpAccount}` : "";
   toast(`Spesa di ${eur(val)}${fromMsg} registrata`);
   document.getElementById("expAmount").value = "";
+  document.getElementById("expAmountHint").textContent = "";
   document.getElementById("expNote").value = "";
 };
 
 document.getElementById("incSubmit").onclick = () => {
-  const val = parseFloat(document.getElementById("incAmount").value.replace(",", "."));
+  const val = parseAmount(document.getElementById("incAmount").value);
   if (!val || val <= 0) { toast("Inserisci un importo valido"); return; }
   addIncome({ amount: val, type: selIncomeType, account: selIncomeAccount,
     note: document.getElementById("incNote").value, date: document.getElementById("incDate").value || todayISO() });
   toast(`Entrata di ${eur(val)} registrata`);
   document.getElementById("incAmount").value = "";
+  document.getElementById("incAmountHint").textContent = "";
   document.getElementById("incNote").value = "";
 };
 
 document.getElementById("trfSubmit").onclick = () => {
-  const val = parseFloat(document.getElementById("trfAmount").value.replace(",", "."));
+  const val = parseAmount(document.getElementById("trfAmount").value);
   if (!val || val <= 0) { toast("Inserisci un importo valido"); return; }
   if (!selTrfFrom || !selTrfTo) { toast("Seleziona i conti"); return; }
   if (selTrfFrom === selTrfTo) { toast("Scegli due conti diversi"); return; }
@@ -732,6 +802,7 @@ document.getElementById("trfSubmit").onclick = () => {
     note: document.getElementById("trfNote").value, date: document.getElementById("trfDate").value || todayISO() });
   toast(`Giroconto di ${eur(val)} da ${selTrfFrom} a ${selTrfTo}`);
   document.getElementById("trfAmount").value = "";
+  document.getElementById("trfAmountHint").textContent = "";
   document.getElementById("trfNote").value = "";
 };
 
@@ -865,7 +936,10 @@ function renderDashboard() {
           ${iconWrap(cat ? cat.icon : ICON_OTHER.icon, cat ? cat.color : ICON_OTHER.color)}
           <div class="movement-cat">${d.title}</div>
         </div>
-        <span class="dl-days mono" style="color:${dlColor(d.days)}">${dlLabel(d.days)}</span>`;
+        <div class="dl-right">
+          ${d.time ? `<div class="dl-time">${d.time}</div>` : ""}
+          <span class="dl-days mono" style="color:${dlColor(d.days)}">${dlLabel(d.days)}</span>
+        </div>`;
       dashDlEl.appendChild(row);
     });
   }
@@ -946,7 +1020,10 @@ function renderDeadlines() {
         </div>
       </div>
       <div style="display:flex;align-items:center;gap:8px">
-        <span class="dl-days mono" style="color:${dlColor(days)}">${dlLabel(days)}</span>
+        <div class="dl-right">
+          ${item.time ? `<div class="dl-time">${item.time}</div>` : ""}
+          <span class="dl-days mono" style="color:${dlColor(days)}">${dlLabel(days)}</span>
+        </div>
         <button class="dl-done" data-id="${item.id}"><i class="ti ti-check"></i></button>
         <button class="del-btn" data-id="${item.id}"><i class="ti ti-x"></i></button>
       </div>`;
@@ -957,22 +1034,15 @@ function renderDeadlines() {
 }
 
 /* ───────────────── SALUTE: VISITE E MEDICINE ───────────────── */
-let visits = [];
 let medicines = [];
 
-function addVisit(entry) {
-  visits = [{ ...entry, id: uid() }, ...visits];
-  persist("visits", { items: visits });
-  render();
-}
-function deleteVisit(id) {
-  visits = visits.filter((v) => v.id !== id);
-  persist("visits", { items: visits });
-  render();
-  toast("Visita eliminata");
-}
 function addMedicine(entry) {
   medicines = [{ ...entry, id: uid() }, ...medicines];
+  persist("medicines", { items: medicines });
+  render();
+}
+function updateMedicine(id, entry) {
+  medicines = medicines.map((m) => (m.id === id ? { ...entry, id } : m));
   persist("medicines", { items: medicines });
   render();
 }
@@ -982,31 +1052,6 @@ function deleteMedicine(id) {
   render();
   toast("Medicina eliminata");
 }
-
-document.querySelectorAll("[data-healthtab]").forEach((btn) => {
-  btn.addEventListener("click", () => {
-    document.querySelectorAll("[data-healthtab]").forEach((b) => b.classList.remove("active"));
-    btn.classList.add("active");
-    document.getElementById("health-visite").style.display = btn.dataset.healthtab === "visite" ? "block" : "none";
-    document.getElementById("health-medicine").style.display = btn.dataset.healthtab === "medicine" ? "block" : "none";
-  });
-});
-
-document.getElementById("visitDate").value = todayISO();
-
-document.getElementById("visitSubmit").onclick = () => {
-  const date = document.getElementById("visitDate").value || todayISO();
-  const doctor = document.getElementById("visitDoctor").value.trim();
-  if (!doctor) { toast("Inserisci il nome del medico"); return; }
-  addVisit({
-    date, time: document.getElementById("visitTime").value, doctor,
-    note: document.getElementById("visitNote").value,
-  });
-  toast("Visita registrata");
-  document.getElementById("visitDoctor").value = "";
-  document.getElementById("visitNote").value = "";
-  document.getElementById("visitTime").value = "";
-};
 
 document.getElementById("medSubmit").onclick = () => {
   const name = document.getElementById("medName").value.trim();
@@ -1021,31 +1066,6 @@ document.getElementById("medSubmit").onclick = () => {
   document.getElementById("medNote").value = "";
 };
 
-function renderVisits() {
-  const sorted = [...visits].sort((a, b) => new Date(b.date) - new Date(a.date));
-  const listEl = document.getElementById("visitsList");
-  listEl.innerHTML = "";
-  if (sorted.length === 0) {
-    listEl.innerHTML = `<div class="empty">Nessuna visita registrata.</div>`;
-    return;
-  }
-  sorted.forEach((v) => {
-    const row = document.createElement("div");
-    row.className = "movement";
-    row.innerHTML = `
-      <div class="movement-left">
-        ${iconWrap("ti:stethoscope", "#7B93AE")}
-        <div>
-          <div class="movement-cat">${v.doctor}</div>
-          <div class="movement-meta">${new Date(v.date).toLocaleDateString("it-IT")}${v.time ? " · " + v.time : ""}${v.note ? " · " + v.note : ""}</div>
-        </div>
-      </div>
-      <button class="del-btn" data-id="${v.id}"><i class="ti ti-x"></i></button>`;
-    row.querySelector(".del-btn").onclick = () => deleteVisit(v.id);
-    listEl.appendChild(row);
-  });
-}
-
 function renderMeds() {
   const listEl = document.getElementById("medsList");
   listEl.innerHTML = "";
@@ -1056,17 +1076,74 @@ function renderMeds() {
   medicines.forEach((m) => {
     const row = document.createElement("div");
     row.className = "movement";
+    row.style.cursor = "pointer";
     row.innerHTML = `
       <div class="movement-left">
         ${iconWrap("ti:pill", "#BD6E7A")}
         <div>
           <div class="movement-cat">${m.name}</div>
-          <div class="movement-meta">${m.dosage || ""}${m.note ? " · " + m.note : ""}</div>
+          <div class="movement-meta">${m.dosage ? m.dosage : ""}${m.note ? " · " + m.note : ""}</div>
         </div>
       </div>
-      <button class="del-btn" data-id="${m.id}"><i class="ti ti-x"></i></button>`;
-    row.querySelector(".del-btn").onclick = () => deleteMedicine(m.id);
+      <button class="del-btn"><i class="ti ti-x"></i></button>`;
+    row.querySelector(".del-btn").onclick = (ev) => {
+      ev.stopPropagation();
+      deleteMedicine(m.id);
+    };
+    row.onclick = () => openEditModal("medicina", m.id);
     listEl.appendChild(row);
+  });
+}
+
+/* ───────────────── GRAFICI ───────────────── */
+let expChart = null;
+function lastMonthKeys(n) {
+  const keys = [];
+  const d = new Date();
+  d.setDate(1);
+  for (let i = n - 1; i >= 0; i--) {
+    const x = new Date(d.getFullYear(), d.getMonth() - i, 1);
+    keys.push(`${x.getFullYear()}-${x.getMonth()}`);
+  }
+  return keys;
+}
+function renderStats() {
+  const content = document.getElementById("statsContent");
+  const keys = lastMonthKeys(6);
+  const labels = keys.map((k) => monthLabel(k).split(" ")[0]);
+
+  const datasets = EXPENSE_CATEGORIES.map((c) => {
+    const data = keys.map((k) => expenses.filter((e) => e.category === c.name && monthKey(e.date) === k).reduce((s, e) => s + e.amount, 0));
+    return { name: c.name, color: c.color, data, total: data.reduce((s, v) => s + v, 0) };
+  }).filter((d) => d.total > 0);
+
+  if (datasets.length === 0) {
+    content.innerHTML = `<div class="empty" style="padding:40px 0;text-align:center">Nessuna spesa negli ultimi 6 mesi — i grafici appariranno appena aggiungi qualcosa.</div>`;
+    return;
+  }
+
+  content.innerHTML = `
+    <div class="section-title">Spese per categoria — ultimi 6 mesi</div>
+    <div class="chart-wrap"><canvas id="expChartCanvas"></canvas></div>
+    <div class="legend">${datasets.map((d) => `<div class="legend-item"><span class="legend-dot" style="background:${d.color}"></span>${d.name}: ${eur(d.total)}</div>`).join("")}</div>`;
+
+  if (expChart) expChart.destroy();
+  expChart = new Chart(document.getElementById("expChartCanvas"), {
+    type: "bar",
+    data: {
+      labels,
+      datasets: datasets.map((d) => ({ label: d.name, data: d.data, backgroundColor: d.color, borderRadius: 3 })),
+    },
+    options: {
+      plugins: {
+        legend: { display: false },
+        tooltip: { callbacks: { label: (ctx) => `${ctx.dataset.label}: ${eur(ctx.parsed.y)}` } },
+      },
+      scales: {
+        x: { stacked: true, grid: { display: false } },
+        y: { stacked: true, grid: { color: "#EFE3D8" }, ticks: { callback: (v) => eur(v) } },
+      },
+    },
   });
 }
 
@@ -1075,8 +1152,9 @@ function render() {
   buildAddForm();
   renderDashboard();
   if (document.getElementById("page-history").classList.contains("active")) renderHistory();
-  if (document.getElementById("page-salute").classList.contains("active")) { renderVisits(); renderMeds(); }
+  if (document.getElementById("page-salute").classList.contains("active")) renderMeds();
   if (document.getElementById("page-scadenze").classList.contains("active")) renderDeadlines();
+  if (document.getElementById("page-stats").classList.contains("active")) renderStats();
 }
 
 document.getElementById("loginBtn").onclick = doGoogleLogin;

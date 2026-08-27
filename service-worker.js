@@ -1,4 +1,4 @@
-const CACHE = "libro-concetta-v2";
+const CACHE = "libro-concetta-v5";
 const ASSETS = ["./", "./index.html", "./app.js", "./firebase-config.js", "./manifest.json", "./icons/icon-192.png", "./icons/icon-512.png"];
 
 self.addEventListener("install", (e) => {
